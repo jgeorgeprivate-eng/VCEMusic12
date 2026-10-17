@@ -6,12 +6,16 @@ import { makeBank, unique } from './_util.js';
 const B4 = toMidi(pitch('B', 0, 4));
 const metresFor = (unit) => unit >= 2 ? ['4/4', '3/4', '6/8'] : ['4/4', '3/4'];
 
-function accentedAudio(time, bars = 2) {
+// Strong beats are loud, accented and doubled an octave below; weak beats are soft and short, so the metre is unmistakable.
+const STRONG = { midis: [B4, B4 - 12], gain: 1.5, artic: 'accent' };
+const MEDIUM = { midi: B4, gain: 0.6 };
+const WEAK = { midi: B4, gain: 0.16, artic: 'staccato' };
+function accentedAudio(time, bars = 3) {
   const m = METRES[time];
   const seq = [];
   for (let b = 0; b < bars; b++) {
-    if (time === '6/8') for (let i = 0; i < 6; i++) seq.push({ midi: B4, beats: 0.5, gain: i % 3 === 0 ? 1.3 : 0.5 });
-    else for (let i = 0; i < m.beats; i++) seq.push({ midi: B4, beats: 1, gain: i === 0 ? 1.3 : 0.5 });
+    if (time === '6/8') for (let i = 0; i < 6; i++) seq.push({ ...(i === 0 ? STRONG : i === 3 ? MEDIUM : WEAK), beats: 0.5, voice: 'piano' });
+    else for (let i = 0; i < m.beats; i++) seq.push({ ...(i === 0 ? STRONG : WEAK), beats: 1, voice: 'piano' });
   }
   return seq;
 }

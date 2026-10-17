@@ -89,9 +89,29 @@ registerExample('metre', (wrap, p, ctx) => {
   const m = METRES[time];
   const bars = parseMelody(p.notes || (time === '3/4' ? 'B4q> B4q B4q | B4q> B4q B4q' : time === '6/8' ? 'B4e> B4e B4e B4e> B4e B4e | B4e> B4e B4e B4e> B4e B4e' : 'B4q> B4q B4q B4q | B4q> B4q B4q B4q'));
   const r = renderNotation({ key: 'C', time, bars, endBar: true });
-  const seq = eventsToSequence(bars);
-  notationFigure(wrap, r, seq, { caption: p.caption || `${time}: the first beat of each bar is strongest.`, voice: 'sine', bpm: +(p.bpm || 96) });
+  const seq = metreSequence(bars, time);
+  notationFigure(wrap, r, seq, { caption: p.caption || `${time}: the first beat of each bar is strongest.`, voice: p.voice || 'piano', bpm: +(p.bpm || 96) });
 });
+/**
+ * A sequence whose strong beats are unmistakable: beat 1 is loud, accented and doubled an octave below;
+ * the secondary beat (3 in 4/4, the fourth quaver in 6/8) is medium; every other beat is soft and short.
+ */
+export function metreSequence(bars, time) {
+  const m = METRES[time] || METRES['4/4'];
+  const secondary = time === '4/4' ? 96 : time === '6/8' ? 72 : -1;
+  const seq = eventsToSequence(bars);
+  const flat = Array.isArray(bars[0]) ? bars.flat() : bars;
+  let pos = 0;
+  const posOf = flat.map(ev => { const p = pos; pos = (pos + (ev.dur * (ev.dot ? 1.5 : 1))) % m.barLength; return p; });
+  seq.forEach(n => {
+    if (n.rest) return;
+    const p = posOf[n.evIndex];
+    if (p === 0) { n.gain = 1.5; n.artic = 'accent'; n.midis = [...n.midis, ...n.midis.map(x => x - 12)]; }
+    else if (p === secondary) { n.gain = 0.6; n.artic = undefined; }
+    else { n.gain = 0.16; n.artic = 'staccato'; }
+  });
+  return seq;
+}
 
 // ---------- compare two scales on one tonic or relative keys ----------
 registerExample('compare-scales', (wrap, p) => {

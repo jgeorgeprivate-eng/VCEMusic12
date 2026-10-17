@@ -26,6 +26,106 @@ function systems(bars, { key, time, perLine = 2, chordText = null, width = 420 }
   return html;
 }
 
+// ---------- melody generator for the harmoniser ----------
+// Rules (all distances are in scale steps: 1 = a step, 2 = a third, 3 = a fourth, 4 = a fifth):
+//  - strong beats (1 and 3) take the chord note nearest the previous note, or the next nearest when that is
+//    within a third, so the line moves rather than repeating;
+//  - no leap larger than a fifth;
+//  - after a leap larger than a third the line moves back by step the opposite way;
+//  - the whole melody stays within about a ninth, in a comfortable oboe range (about D4 to C6);
+//  - weak-beat notes step toward the next chord note (passing notes), or are neighbour notes when the chord
+//    note repeats;
+//  - the melody ends on the tonic, approached by step from degree 2 or degree 7.
+// Pitches are handled as indices into a three-octave diatonic pool; `sign` and `Math.abs` give direction and size.
+const HARMONY_PLANS = [[1, 4, 5, 1, 1, 4, 5, 1], [1, 1, 4, 4, 1, 1, 5, 1], [1, 5, 1, 4, 1, 4, 5, 1], [1, 4, 1, 5, 1, 4, 5, 1]];   // all end V then I, as the lesson suggests
+const OBOE_LOW = 62, OBOE_HIGH = 84;   // D4 to C6
+function generateMelody(key) {
+  const sc = keyScale(key).slice(0, 7);
+  const pool = [-1, 0, 1].flatMap(o => sc.map(p => ({ ...p, oct: p.oct + o })));   // indices 0..20; tonic at 0, 7, 14
+  const rnd = (n) => Math.floor(Math.random() * n);
+  const pick = (arr) => arr[rnd(arr.length)];
+  const sign = (x) => (x > 0 ? 1 : x < 0 ? -1 : 0);
+  // choose a ninth-wide window [lo, lo+8] inside the oboe range that holds a tonic with room on both sides of it
+  const windows = [];
+  for (let lo = 0; lo + 8 < pool.length; lo++) {
+    if (toMidi(pool[lo]) < OBOE_LOW || toMidi(pool[lo + 8]) > OBOE_HIGH) continue;
+    const tonics = [0, 7, 14].filter(t => t >= lo + 1 && t <= lo + 7);
+    if (tonics.length) windows.push({ lo, hi: lo + 8, tonics });
+  }
+  const win = pick(windows);
+  const tonic = pick(win.tonics);
+  const chordTones = (deg) => { const t = triad(key, deg); const rel = t.notes.map(n => ((T.diatonicIndex(n) - T.diatonicIndex(sc[0])) % 7 + 7) % 7); const out = []; for (let i = win.lo; i <= win.hi; i++) if (rel.includes(((i % 7) + 7) % 7)) out.push(i); return out; };
+  const inWin = (i) => i >= win.lo && i <= win.hi;
+
+  function attempt() {
+    const plan = pick(HARMONY_PLANS);
+    // slot layout: bars 1 to 7 are either two minims (strong, strong) or four crotchets (strong, weak, strong, weak); bar 8 is the tonic
+    const slots = [];
+    for (let b = 0; b < 7; b++) {
+      const minims = Math.random() < 0.35;
+      if (minims) slots.push({ b, strong: true, dur: 96 }, { b, strong: true, dur: 96 });
+      else slots.push({ b, strong: true, dur: 48 }, { b, strong: false, dur: 48 }, { b, strong: true, dur: 48 }, { b, strong: false, dur: 48 });
+    }
+    slots.push({ b: 7, strong: true, dur: 192, final: true });
+    const notes = new Array(slots.length).fill(null);
+    // 1. strong beats: nearest chord note to the previous strong-beat note
+    let prev = null, prevMove = 0;
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      if (!s.strong) continue;
+      if (s.final) { notes[i] = tonic; continue; }
+      const tones = chordTones(plan[s.b]);
+      if (prev === null) { notes[i] = pick(tones.filter(t => Math.abs(t - tonic) <= 4)); prev = notes[i]; continue; }
+      const nextIsStrong = i + 1 < slots.length && slots[i + 1].strong;
+      const lastBeforeFinal = slots[i + 1] && slots[i + 1].final;
+      let cands = tones.filter(t => Math.abs(t - prev) <= (nextIsStrong ? 2 : 4));   // a leap larger than a third needs a weak beat after it to step back
+      if (Math.abs(prevMove) > 2) cands = cands.filter(t => { const d = (t - prev) * -sign(prevMove); return d >= 0 && d <= 3; });   // after a leap the weak note steps back the opposite way, so the next chord note must lie on that side
+      if (lastBeforeFinal) cands = cands.filter(t => Math.abs(t - tonic) === 1);              // approach the tonic by step from degree 2 or 7
+      else if (i + 2 < slots.length && slots[i + 2].final) cands = cands.filter(t => Math.abs(t - tonic) <= 3);   // leave room for a weak-beat note on degree 2 or 7
+      if (!cands.length) return null;
+      cands.sort((x, y) => Math.abs(x - prev) - Math.abs(y - prev));
+      let choice = cands[0];
+      if (cands.length > 1 && Math.abs(cands[1] - prev) <= 2 && (choice === prev || Math.random() < 0.5)) choice = cands[1];
+      const leaps = cands.filter(t => Math.abs(t - prev) > 2);
+      if (leaps.length && Math.abs(prevMove) <= 2 && !lastBeforeFinal && Math.random() < 0.35) choice = pick(leaps);   // an occasional leap of a fourth or fifth, stepped back from on the next note
+      notes[i] = choice; prevMove = choice - prev; prev = choice;
+    }
+    // 2. weak beats: step toward the next chord note
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i].strong) continue;
+      const a = notes[i - 1], c = notes[i + 1];
+      const d = c - a, dir = sign(d), size = Math.abs(d);
+      let opts;
+      if (size === 0) opts = [a + 1, a - 1].filter(inWin);          // neighbour note
+      else if (size === 1) opts = [a, c];                             // repeat, or anticipate the chord note
+      else if (size === 2) opts = [a + dir];                          // passing note
+      else if (size === 3) opts = [a + dir, a + dir * 2];             // step then third, or third then step
+      else opts = [a + dir * 2];                                      // a fifth: third then third
+      if (slots[i + 1].final) opts = opts.filter(w => Math.abs(w - tonic) === 1);   // into the last note by step from degree 2 or 7
+      if (i >= 2) { const into = a - notes[i - 2]; if (Math.abs(into) > 2) opts = opts.filter(w => w === a - sign(into)); }   // step back after a leap
+      if (!opts.length) return null;
+      notes[i] = pick(opts);
+    }
+    // 3. check every rule
+    for (let i = 1; i < notes.length; i++) {
+      const m = notes[i] - notes[i - 1];
+      if (Math.abs(m) > 4 || !inWin(notes[i])) return null;
+      if (i >= 2) { const pm = notes[i - 1] - notes[i - 2]; if (Math.abs(pm) > 2 && m !== -sign(pm)) return null; }
+    }
+    if (Math.abs(notes[notes.length - 2] - tonic) !== 1) return null;
+    const bars = Array.from({ length: 8 }, () => []);
+    slots.forEach((s, i) => bars[s.b].push({ pitches: [pool[notes[i]]], dur: s.dur }));
+    bars.plan = plan;
+    return bars;
+  }
+  for (let n = 0; n < 400; n++) { const r = attempt(); if (r) return r; }
+  // fallback (should not happen): a plain chord-tone melody
+  const plan = HARMONY_PLANS[0];
+  const bars = plan.map((d, b) => b === 7 ? [{ pitches: [pool[tonic]], dur: 192 }] : [{ pitches: [pool[chordTones(d)[0]]], dur: 96 }, { pitches: [pool[chordTones(d)[1] ?? chordTones(d)[0]]], dur: 96 }]);
+  bars.plan = plan;
+  return bars;
+}
+
 // ---------- harmoniser (C1): choose I, IV or V for each bar of an 8-bar melody ----------
 export function harmoniser(el, ctx) {
   const unit = ctx.unit || 1;
@@ -39,19 +139,8 @@ export function harmoniser(el, ctx) {
     <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap"><button type="button" class="btn sm" data-role="play">Play with my chords</button><button type="button" class="btn sm ghost" data-role="melody">Melody only</button><button type="button" class="btn sm ghost" data-role="check">Check</button></div>
     <p class="ex-out" data-role="out"></p>`;
   function makeMelody() {
-    const sc = keyScale(key); const two = sc.slice(0, 7).concat(sc.slice(0, 8).map(p => ({ ...p, oct: p.oct + 1 })));
-    const plans = [[1, 4, 5, 1, 1, 4, 5, 1], [1, 1, 4, 1, 5, 5, 1, 1], [1, 5, 1, 4, 1, 4, 5, 1], [1, 4, 1, 5, 1, 4, 5, 1]];
-    plan = plans[Math.floor(Math.random() * plans.length)];
-    melody = plan.map((d, b) => {
-      const t = triad(key, d); const tones = t.notes.map(n => T.diatonicIndex(n) - T.diatonicIndex(sc[0])).map(i => (i % 7 + 7) % 7);
-      const pickTone = () => { const i = tones[Math.floor(Math.random() * 3)]; return two[i + (Math.random() < 0.4 ? 7 : 0) - (i > 4 ? 0 : 0)]; };
-      const a = pickTone(); let c = pickTone();
-      if (b === 7) { const root = two[tones[0]]; return [{ pitches: [root], dur: 192 }]; }
-      const shape = Math.random();
-      if (shape < 0.4) return [{ pitches: [a], dur: 96 }, { pitches: [c], dur: 96 }];
-      const passing = (from) => two[Math.max(0, Math.min(14, two.findIndex(p => p === from) + (Math.random() < 0.5 ? 1 : -1)))];
-      return [{ pitches: [a], dur: 48 }, { pitches: [passing(a)], dur: 48 }, { pitches: [c], dur: 48 }, { pitches: [passing(c)], dur: 48 }];
-    });
+    melody = generateMelody(key);
+    plan = melody.plan;
     choices = Array(8).fill(null);
     draw(); el.querySelector('[data-role=out]').textContent = '';
   }
@@ -381,3 +470,4 @@ export const CSS = `
 .sliders label span{color:var(--ink-2);font-size:14px;font-variant-numeric:tabular-nums}
 .tool .seg button.on,.tool .btn.on{background:var(--accent,var(--creat));border-color:var(--accent,var(--creat));color:#fff}
 `;
+export const __generateMelody = generateMelody;   // exported for tools/test-theory.mjs

@@ -12,19 +12,56 @@ export function context() {
     master = ctx.createGain(); master.gain.value = 0.9;
     master.connect(comp); comp.connect(ctx.destination);
   }
-  if (ctx.state === 'suspended') ctx.resume();
+  if (ctx.state !== 'running') { try { const p = ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ } }
   return ctx;
 }
 
-/** Call from the first user tap so iOS lets sound through. Safe to call repeatedly. */
-export function unlock() {
-  const c = context();
-  if (unlocked) return;
-  unlocked = true;
-  const b = c.createBuffer(1, 1, 22050); const s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0);
+/**
+ * iPhone sound fix. Safari only lets an AudioContext start inside a real user gesture, and on
+ * iOS the context can stay "suspended" or "interrupted" even after resume() is called. So:
+ *  - start audio on touchend, click, pointerup and keydown (touchend and click are the events
+ *    iOS Safari treats as user activation; pointerdown alone is not enough on some versions);
+ *  - ask for the "playback" audio session so the silent switch and media-volume slider do not mute us;
+ *  - play a short silent <audio> element on the first tap, which flips the page into media-playback mode;
+ *  - retry resume() until the context reports "running".
+ * Safe to call repeatedly.
+ */
+let silentEl = null;
+function silentDataUri() {
+  // 0.05 s of silence as a WAV file (44-byte header + 2205 zero bytes), built in code to avoid a binary asset.
+  const rate = 44100, samples = 2205, dataLen = samples * 2;
+  const buf = new ArrayBuffer(44 + dataLen); const v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + dataLen, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, dataLen, true);
+  let bin = ''; const bytes = new Uint8Array(buf); for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return 'data:audio/wav;base64,' + btoa(bin);
 }
-document.addEventListener('pointerdown', unlock, { once: false, passive: true });
-document.addEventListener('keydown', unlock, { passive: true });
+function playSilentElement() {
+  try {
+    if (!silentEl) { silentEl = document.createElement('audio'); silentEl.setAttribute('playsinline', ''); silentEl.preload = 'auto'; silentEl.src = silentDataUri(); silentEl.volume = 0.01; }
+    const p = silentEl.play(); if (p && p.catch) p.catch(() => {});
+  } catch (e) { /* ignore */ }
+}
+let retryTimer = null;
+function retryUntilRunning() {
+  if (!ctx || ctx.state === 'running') { retryTimer = null; return; }
+  try { const p = ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ }
+  retryTimer = setTimeout(retryUntilRunning, 250);
+}
+export function unlock() {
+  try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch (e) { /* ignore */ }
+  const c = context();
+  if (!unlocked) {
+    unlocked = true;
+    playSilentElement();
+    const b = c.createBuffer(1, 1, 22050); const s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0);
+  }
+  if (c.state !== 'running' && !retryTimer) retryTimer = setTimeout(retryUntilRunning, 0);
+}
+['touchend', 'click', 'pointerup', 'keydown'].forEach(ev => document.addEventListener(ev, unlock, { passive: true }));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ctx && ctx.state !== 'running' && !retryTimer) retryTimer = setTimeout(retryUntilRunning, 0); });
 
 // Harmonic recipes for generated voices: [amplitudes...], plus envelope and filter settings.
 const VOICES = {

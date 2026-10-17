@@ -71,7 +71,7 @@ export function renderNotation(opts) {
   // time signature
   if (opts.time && !opts.noTime) {
     const [n, d] = opts.time.split('/');
-    out.push(`<text class="gl" x="${x}" y="${yLine(2)}">${G.timeSig(+n)}</text><text class="gl" x="${x}" y="${yLine(0)}">${G.timeSig(+d)}</text>`);
+    out.push(`<text class="gl" x="${x}" y="${yLine(3)}">${G.timeSig(+n)}</text><text class="gl" x="${x}" y="${yLine(1)}">${G.timeSig(+d)}</text>`);
     x += 2.4 * S;
   }
   x += 0.6 * S;

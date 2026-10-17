@@ -26,7 +26,7 @@ const templates = [
   },
   (r) => {
     const q = r.pick([
-      { text: 'Which two chords should end a harmonised melody so it sounds finished?', correct: 'V then I', wrong: ['IV then V', 'I then IV', 'ii then vi'] },
+      { text: 'Which two chords make the end of a harmonised melody sound finished?', correct: 'V then I', wrong: ['IV then V', 'I then IV', 'ii then vi'] },
       { text: 'Which beats of a 4/4 bar matter most when choosing a chord?', correct: 'Beats 1 and 3', wrong: ['Beats 2 and 4', 'Only beat 4', 'All beats equally'] },
       { text: 'What is a passing note?', correct: 'A note on a weak beat that steps between two chord tones', wrong: ['The first note of a bar', 'A note held across a bar line', 'The root of the chord'] },
       { text: 'Why can I, IV and V harmonise any major-key melody?', correct: 'Between them they contain every note of the scale', wrong: ['They are the loudest chords', 'They are all minor', 'They have the same root'] },

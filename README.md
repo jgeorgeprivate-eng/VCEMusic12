@@ -4,7 +4,7 @@ A self-contained study app for VCE Music Units 1 and 2. Static site, no server, 
 
 ## Publishing on GitHub Pages
 
-1. Put the contents of this folder at the root of the repository (or in the folder GitHub Pages serves).
+1. Put the contents of this folder at the root of the repository (or in the folder GitHub Pages serves). Keep the empty `.nojekyll` file: without it GitHub Pages runs the site through Jekyll, which hides files and folders whose names start with an underscore (such as `content/questions/_util.js`) and breaks the lessons. Files whose names start with a dot are hidden in Finder, so check it is there with `ls -a`.
 2. In the repository settings, turn on GitHub Pages for the branch.
 3. Open `https://<username>.github.io/<repository>/` on the phone, then use Share → Add to Home Screen in Safari.
 
